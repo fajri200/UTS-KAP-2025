@@ -1,0 +1,152 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Smart Home Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.1.0/mqttws31.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 12px; background: #f7f8fa; }
+    h2 { color: #333; }
+    .card { 
+      border: 1px solid #ddd; 
+      padding: 12px; 
+      border-radius: 10px; 
+      margin-bottom: 16px; 
+      background: white;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+    }
+    #controls button { 
+      margin: 4px; 
+      padding: 8px 12px; 
+      border: none; 
+      border-radius: 6px; 
+      cursor: pointer; 
+      font-weight: bold; 
+    }
+    #controls button:hover { opacity: 0.9; }
+    .on { background: #4CAF50; color: white; }
+    .off { background: #f44336; color: white; }
+    #connStatus { font-weight: bold; margin-top: 6px; }
+  </style>
+</head>
+<body>
+  <h2> Smart Home Dashboard</h2>
+
+  <div class="card">
+    <h3> Connection</h3>
+    Broker: 
+    <input id="broker" value="ws://192.168.1.50:9001" style="width:250px">
+    <button id="connectBtn">Connect</button>
+    <div id="connStatus">Disconnected</div>
+  </div>
+
+  <div class="card">
+    <h3> Sensor Data</h3>
+    <div> Temperature: <span id="temp">-</span> °C</div>
+    <div> Humidity: <span id="hum">-</span> %</div>
+    <div> Motion: <span id="motion">-</span></div>
+    <canvas id="tempChart" width="400" height="150"></canvas>
+  </div>
+
+  <div class="card">
+    <h3> Controls</h3>
+    <div id="controls">
+      <button class="on" onclick="setRelay('ON')">Relay ON</button>
+      <button class="off" onclick="setRelay('OFF')">Relay OFF</button>
+      <button class="on" onclick="setAlarm('ON')">Alarm ON</button>
+      <button class="off" onclick="setAlarm('OFF')">Alarm OFF</button>
+    </div>
+    <div> Relay status: <span id="relayStatus">-</span></div>
+    <div> Alarm status: <span id="alarmStatus">-</span></div>
+  </div>
+
+  <script>
+    let client = null;
+    let tempData = [];
+    let labels = [];
+    const maxPoints = 20;
+
+    const tempCtx = document.getElementById('tempChart').getContext('2d');
+    const tempChart = new Chart(tempCtx, {
+      type: 'line',
+      data: { 
+        labels: labels, 
+        datasets: [{
+          label: 'Temperature (°C)', 
+          data: tempData, 
+          borderColor: '#2196f3', 
+          tension: 0.3, 
+          fill: false
+        }] 
+      },
+      options: { scales: { y: { beginAtZero: false } } }
+    });
+
+    function connectBroker() {
+      const brokerUrl = document.getElementById('broker').value;
+      const [host, port] = brokerUrl.replace('ws://','').split(':');
+      client = new Paho.MQTT.Client(host, Number(port), 'webclient-' + Math.floor(Math.random()*1000));
+      client.onConnectionLost = onConnectionLost;
+      client.onMessageArrived = onMessageArrived;
+      client.connect({ onSuccess: onConnect, onFailure: onFail, useSSL: false });
+    }
+
+    function onConnect() {
+      document.getElementById('connStatus').innerText = ' Connected';
+      client.subscribe('home/sensors/dht');
+      client.subscribe('home/sensors/pir');
+      client.subscribe('home/status/relay');
+      client.subscribe('home/status/alarm');
+    }
+
+    function onFail(e) {
+      document.getElementById('connStatus').innerText = ' Connection Failed';
+      console.error(e);
+    }
+
+    function onConnectionLost(response) {
+      document.getElementById('connStatus').innerText = '🔌 Disconnected';
+    }
+
+    function onMessageArrived(message) {
+      const topic = message.destinationName;
+      const payload = message.payloadString;
+      try {
+        if (topic === 'home/sensors/dht') {
+          const obj = JSON.parse(payload);
+          document.getElementById('temp').innerText = obj.temperature.toFixed(1);
+          document.getElementById('hum').innerText = obj.humidity.toFixed(1);
+          // update chart
+          if (labels.length >= maxPoints) { labels.shift(); tempData.shift(); }
+          labels.push(new Date().toLocaleTimeString());
+          tempData.push(obj.temperature);
+          tempChart.update();
+        } else if (topic === 'home/sensors/pir') {
+          const obj = JSON.parse(payload);
+          document.getElementById('motion').innerText = obj.motion ? 'Yes' : 'No';
+        } else if (topic === 'home/status/relay') {
+          document.getElementById('relayStatus').innerText = payload;
+        } else if (topic === 'home/status/alarm') {
+          document.getElementById('alarmStatus').innerText = payload;
+        }
+      } catch (e) { console.error('Invalid payload', e); }
+    }
+
+    function setRelay(state) {
+      const msg = new Paho.MQTT.Message(state);
+      msg.destinationName = 'home/control/relay';
+      client.send(msg);
+    }
+
+    function setAlarm(state) {
+      const msg = new Paho.MQTT.Message(state);
+      msg.destinationName = 'home/control/alarm';
+      client.send(msg);
+    }
+
+    document.getElementById('connectBtn').addEventListener('click', connectBroker);
+  </script>
+</body>
+</html>
