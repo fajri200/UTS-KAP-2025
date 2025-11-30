@@ -1,5 +1,4 @@
 /*
-
 #include <WiFi.h>
 #include <PubSubClient.h>
 #include <Adafruit_SSD1306.h>
@@ -78,4 +77,64 @@ delay(2000);
 
 void setup() {
 Serial.begin(115200);
-pinMode(PI
+pinMode(PIRPIN, INPUT);
+pinMode(RELAYPIN, OUTPUT);
+pinMode(ALARMPIN, OUTPUT);
+dht.begin();
+if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) { // Adjust I2C address if needed
+  Serial.println(F("SSD1306 allocation failed"));
+  for (;;);
+}
+display.clearDisplay();
+display.setTextSize(1);
+display.setTextColor(WHITE);
+display.setCursor(0,0);
+display.println("Initializing...");
+display.display();
+WiFi.begin(ssid, password);
+while (WiFi.status() != WL_CONNECTED) {
+  delay(500);
+  Serial.print(".");
+}
+Serial.println("WiFi connected");
+client.setServer(mqtt_server, mqtt_port);
+client.setCallback(callback);
+reconnect();
+}
+
+
+void loop() {
+if (!client.connected()) {
+  reconnect();
+}
+client.loop();
+
+unsigned long now = millis();
+if (now - lastDhtPublish > DHT_INTERVAL) {
+  lastDhtPublish = now;
+  float h = dht.readHumidity();
+  float t = dht.readTemperature();
+  if (isnan(h) || isnan(t)) {
+    Serial.println("Failed to read from DHT sensor!");
+    return;
+  }
+  String dhtMsg = "Temperature: " + String(t) + "C, Humidity: " + String(h) + "%";
+  client.publish(topic_dht, dhtMsg.c_str());
+  // Update OLED
+  display.clearDisplay();
+  display.setCursor(0,0);
+  display.println("Temp: " + String(t) + "C");
+  display.println("Hum: " + String(h) + "%");
+  display.println("Relay: " + (digitalRead(RELAYPIN) ? "ON" : "OFF"));
+  display.println("Alarm: " + (digitalRead(ALARMPIN) ? "ON" : "OFF"));
+  display.display();
+}
+
+int pirState = digitalRead(PIRPIN);
+if (pirState == HIGH) {
+  client.publish(topic_pir, "motion");
+  Serial.println("Motion detected!");
+  // Optional: Add a delay or flag to prevent spamming
+}
+}
+
